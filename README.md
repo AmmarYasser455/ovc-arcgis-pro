@@ -45,6 +45,8 @@ OVC (Overlap Violation Checker) is a native ArcGIS Pro quality control toolbox d
 
 ## Toolbox Contents
 
+![OVC Toolbox Structure](docs/images/ovc_toolbox.png)
+
 | Tool | Category | Description |
 |------|----------|-------------|
 | Building Overlap Checker | Building QC | Detects overlapping polygons and classifies by severity |
@@ -66,6 +68,8 @@ OVC (Overlap Violation Checker) is a native ArcGIS Pro quality control toolbox d
 - `OVERLAP_RATIO` – Proportion of smaller feature covered
 - `OVERLAP_TYPE` – Classification (DUPLICATE, PARTIAL, SLIVER)
 
+![Building Overlap Checker Result](docs/images/build_ov.png)
+
 ### Building-Road Conflict Checker
 
 1. Select your **building layer** (polygons)
@@ -78,6 +82,8 @@ OVC (Overlap Violation Checker) is a native ArcGIS Pro quality control toolbox d
 - `BUILDING_FID`, `ROAD_FID` – Original feature IDs
 - `CONFLICT_AREA_M2` – Conflict area in square meters
 - `BUFFER_DIST_M` – Buffer distance used
+
+![Building-Road Conflict Checker Result](docs/images/road_build_ov.png)
 
 ## Repository Structure
 
