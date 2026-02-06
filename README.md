@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/ovc_arcpro.png" width="400" alt="OVC Logo">
+</p>
+
 # OVC – Overlap Violation Checker for ArcGIS Pro
 
 A production-ready ArcGIS Pro Python Toolbox for detecting spatial conflicts and topology issues in vector datasets.
