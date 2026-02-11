@@ -52,8 +52,17 @@ def _run_geoqa_precheck(feature_class, dataset_label="input", expected_type=None
     arcpy.AddMessage(f"\n🔍 GeoQA Pre-Check: {dataset_label}")
     arcpy.AddMessage("-" * 50)
 
+    # Resolve ArcGIS layer name to actual file path on disk
+    data_path = str(feature_class)
     try:
-        profile = geoqa.profile(str(feature_class), name=dataset_label)
+        desc = arcpy.Describe(feature_class)
+        if hasattr(desc, "catalogPath"):
+            data_path = desc.catalogPath
+    except Exception:
+        pass  # fall back to original string
+
+    try:
+        profile = geoqa.profile(data_path, name=dataset_label)
     except Exception as e:
         arcpy.AddWarning(f"GeoQA pre-check could not profile {dataset_label}: {e}")
         return True  # non-blocking – let the tool try anyway
