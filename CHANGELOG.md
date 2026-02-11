@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.1] – 2026-02-11
+
+### Bug Fixes
+- **Fixed GeoQA pre-check for ArcGIS layer names** — resolved issue where
+  the pre-check failed with "File not found" when input was an ArcGIS Pro
+  layer name (e.g. Arabic names like المباني) instead of a file path.
+  Now uses `arcpy.Describe().catalogPath` to resolve the actual data source.
+
 ## [3.1.0] – 2026-02-11
 
 ### New Feature
