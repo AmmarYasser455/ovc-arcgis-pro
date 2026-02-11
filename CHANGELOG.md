@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.1.0] – 2026-02-11
+
+### New Feature
+- **GeoQA pre-check integrated into all 5 tools** — each tool now runs a
+  `geoqa.profile()` quality assessment on input data before the main QC
+  pipeline.  Reports quality score, geometry issues, and CRS status via
+  ArcGIS Pro messages.  Blocks execution if critical issues are found
+  (missing CRS, >10% invalid geometries, quality score < 50, wrong
+  geometry type).  Gracefully skips if geoqa is not installed.
+
 ## [3.0.0] – 2026-02-11
 
 ### Performance

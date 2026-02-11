@@ -26,6 +26,7 @@ OVC (Overlap Violation Checker) is a native ArcGIS Pro quality control toolbox d
 - **Automatic Coordinate System Handling** – Auto-projects geographic data to UTM for accurate calculations
 - **Spatial Indexing** – Grid-based optimization for performance with large datasets
 - **Native ArcGIS Pro Integration** – Runs in background, supports selections, auto-adds results to map
+- **GeoQA Pre-Check Integration** – Automatic data quality profiling before each check (requires [geoqa](https://github.com/AmmarYasser455/geoqa) installed; gracefully skips if unavailable)
 
 ## Supported Versions
 
@@ -69,6 +70,24 @@ This ArcGIS Pro toolbox shares validation logic and thresholds with the
 (GeoPandas/Shapely). Both projects use the same overlap classification
 thresholds, UTM auto-projection strategy, and spatial index approach so
 that results are consistent regardless of which tool you run.
+
+### GeoQA Integration
+
+Every tool now runs a **GeoQA pre-check** before starting the main QC
+pipeline.  This catches fundamental data issues early:
+
+- ❌ **Blockers** (abort the tool): Missing CRS, empty dataset, >10% invalid geometries, quality score < 50
+- ⚠️ **Warnings** (continue with notice): Small number of invalid/empty/null/duplicate geometries
+
+The pre-check uses [GeoQA](https://github.com/AmmarYasser455/geoqa)
+(`pip install geoqa`).  If geoqa is not installed, the tools run
+normally without the pre-check — **no extra dependency is required**.
+
+To install geoqa into ArcGIS Pro's Python environment:
+```
+# In ArcGIS Pro's Python Command Prompt:
+pip install geoqa
+```
 
 ## Basic Usage
 
@@ -154,6 +173,7 @@ went from **48 minutes → ~3 seconds** — a ~1,000× improvement.
 
 - ArcGIS Pro 3.0 or later
 - No additional Python packages required (uses only ArcPy)
+- **Optional:** [geoqa](https://github.com/AmmarYasser455/geoqa) for automatic data quality pre-checks
 - No external data downloads
 
 ## License

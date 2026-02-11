@@ -20,6 +20,113 @@ if TOOLBOX_DIR not in sys.path:
     sys.path.insert(0, TOOLBOX_DIR)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# GeoQA Pre-Check  –  data-readiness gate powered by geoqa
+# ─────────────────────────────────────────────────────────────────────
+
+def _run_geoqa_precheck(feature_class, dataset_label="input", expected_type=None):
+    """
+    Run a GeoQA quality profile on *feature_class* before the main
+    QC check.  Reports quality score, warnings, and blockers via
+    arcpy messages.
+
+    If geoqa is not installed the pre-check is silently skipped so
+    the toolbox remains usable without extra dependencies.
+
+    Args:
+        feature_class: Path or layer name of the input data.
+        dataset_label: Human-readable name shown in messages.
+        expected_type: Optional expected geometry type string
+                       (e.g. "Polygon", "Polyline").
+
+    Returns:
+        True  – data is ready (or geoqa unavailable),
+        False – blocking issues found; caller should abort.
+    """
+    try:
+        import geoqa
+    except ImportError:
+        # geoqa not installed – skip silently
+        return True
+
+    arcpy.AddMessage(f"\n🔍 GeoQA Pre-Check: {dataset_label}")
+    arcpy.AddMessage("-" * 50)
+
+    try:
+        profile = geoqa.profile(str(feature_class), name=dataset_label)
+    except Exception as e:
+        arcpy.AddWarning(f"GeoQA pre-check could not profile {dataset_label}: {e}")
+        return True  # non-blocking – let the tool try anyway
+
+    score = round(profile.quality_score, 1)
+    arcpy.AddMessage(f"  Features : {profile.feature_count:,}")
+    arcpy.AddMessage(f"  Geometry : {profile.geometry_type}")
+    arcpy.AddMessage(f"  CRS      : {profile.crs or 'MISSING'}")
+    arcpy.AddMessage(f"  Score    : {score}/100")
+
+    geom = profile.geometry_results
+    blockers = []
+    warnings = []
+
+    # ── Blockers ────────────────────────────────────────────────
+    if profile.crs is None:
+        blockers.append("No CRS defined – OVC requires georeferenced data")
+
+    if profile.feature_count == 0:
+        blockers.append("Dataset is empty (0 features)")
+
+    invalid_count = geom.get("invalid_count", 0)
+    if invalid_count > 0:
+        pct = invalid_count / max(profile.feature_count, 1) * 100
+        if pct > 10:
+            blockers.append(
+                f"{invalid_count} invalid geometries ({pct:.1f}%) – "
+                "fix before running QC"
+            )
+        else:
+            warnings.append(f"{invalid_count} invalid geometries ({pct:.1f}%)")
+
+    if score < 50:
+        blockers.append(f"Quality score very low ({score}/100) – data needs cleaning")
+
+    if expected_type and profile.geometry_type:
+        if expected_type.lower() not in profile.geometry_type.lower():
+            blockers.append(
+                f"Expected {expected_type} geometries, got {profile.geometry_type}"
+            )
+
+    # ── Warnings ────────────────────────────────────────────────
+    empty_count = geom.get("empty_count", 0)
+    if empty_count > 0:
+        warnings.append(f"{empty_count} empty geometries")
+
+    null_count = geom.get("null_count", 0)
+    if null_count > 0:
+        warnings.append(f"{null_count} null geometries")
+
+    dup_count = geom.get("duplicate_count", 0)
+    if dup_count > 0:
+        warnings.append(f"{dup_count} duplicate geometries")
+
+    # ── Report ──────────────────────────────────────────────────
+    for w in warnings:
+        arcpy.AddWarning(f"  ⚠️  {w}")
+    for b in blockers:
+        arcpy.AddError(f"  ❌ BLOCKER: {b}")
+
+    if blockers:
+        arcpy.AddError(
+            f"\n  GeoQA Pre-Check FAILED for {dataset_label} – "
+            f"{len(blockers)} blocking issue(s). Fix data before running QC."
+        )
+        return False
+
+    status = "✅ PASSED" if not warnings else "✅ PASSED (with warnings)"
+    arcpy.AddMessage(f"  {status}")
+    arcpy.AddMessage("-" * 50)
+    return True
+
+
 class Toolbox(object):
     """
     Overlap Violation Checker (OVC) Toolbox.
@@ -216,6 +323,11 @@ class BuildingOverlapChecker(object):
         partial_threshold = parameters[4].value or 0.50
         output_features = parameters[5].valueAsText
         
+        # GeoQA pre-check
+        if not _run_geoqa_precheck(input_features, "Buildings", expected_type="Polygon"):
+            arcpy.AddError("Pre-check failed. Aborting.")
+            return
+
         # Import the checker module
         from checks.building_overlap import BuildingOverlapChecker as Checker
         from core.config import OverlapConfig
@@ -394,6 +506,14 @@ class BuildingRoadConflictChecker(object):
         min_conflict_area = parameters[3].value or 0.5
         output_features = parameters[4].valueAsText
         
+        # GeoQA pre-check on both inputs
+        if not _run_geoqa_precheck(building_features, "Buildings", expected_type="Polygon"):
+            arcpy.AddError("Pre-check failed for buildings. Aborting.")
+            return
+        if not _run_geoqa_precheck(road_features, "Roads", expected_type="Polyline"):
+            arcpy.AddError("Pre-check failed for roads. Aborting.")
+            return
+
         from checks.building_road_conflict import BuildingRoadConflictChecker as Checker
         from core.config import RoadConflictConfig
         
@@ -607,6 +727,11 @@ class RoadDangleChecker(object):
         tolerance = parameters[1].value or 0.5
         output_features = parameters[2].valueAsText
 
+        # GeoQA pre-check
+        if not _run_geoqa_precheck(road_features, "Roads", expected_type="Polyline"):
+            arcpy.AddError("Pre-check failed. Aborting.")
+            return
+
         from checks.road_qc.engine import find_dangles
         from core.geometry import validate_line_geometry
         from utils.cursor_helpers import (
@@ -769,6 +894,11 @@ class RoadDisconnectedChecker(object):
         tolerance = parameters[1].value or 0.5
         output_features = parameters[2].valueAsText
 
+        # GeoQA pre-check
+        if not _run_geoqa_precheck(road_features, "Roads", expected_type="Polyline"):
+            arcpy.AddError("Pre-check failed. Aborting.")
+            return
+
         from checks.road_qc.engine import find_disconnected
         from core.geometry import validate_line_geometry
         from utils.cursor_helpers import (
@@ -904,6 +1034,11 @@ class RoadSelfIntersectionChecker(object):
         """Execute the Road Self-Intersection Checker."""
         road_features = parameters[0].valueAsText
         output_features = parameters[1].valueAsText
+
+        # GeoQA pre-check
+        if not _run_geoqa_precheck(road_features, "Roads", expected_type="Polyline"):
+            arcpy.AddError("Pre-check failed. Aborting.")
+            return
 
         from checks.road_qc.engine import find_self_intersections
         from core.geometry import validate_line_geometry
