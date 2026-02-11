@@ -312,8 +312,7 @@ class BuildingOverlapChecker:
         if not extents:
             return results
         
-        avg_size = max((total_width + total_height) / (2 * len(extents)), 10.0)
-        cell_size = avg_size * 2
+        cell_size = SpatialIndex.compute_optimal_cell_size(geometries, multiplier=2.0)
         
         sindex = SpatialIndex(cell_size=cell_size)
         for fid, geom in geometries.items():

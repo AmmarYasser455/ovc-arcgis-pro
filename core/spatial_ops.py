@@ -34,10 +34,16 @@ class OverlapResult:
 
 class SpatialIndex:
     """
-    Simple spatial index using extent-based filtering.
+    Grid-based spatial index for ArcPy geometries.
     
-    Uses a grid-based approach to reduce the number of geometry
-    comparisons needed for overlap detection.
+    Partitions space into fixed-size grid cells and assigns each
+    feature to the cells its bounding box overlaps.  Candidate
+    queries then only return features sharing at least one cell,
+    dramatically reducing the number of full geometry comparisons.
+    
+    For best performance the *cell_size* should be ~2-3× the average
+    feature extent.  Use :meth:`compute_optimal_cell_size` to
+    auto-calculate a good value from a dict of geometries.
     """
     
     def __init__(self, cell_size: float = 100.0):
@@ -51,6 +57,37 @@ class SpatialIndex:
         self.grid: Dict[Tuple[int, int], List[int]] = {}
         self.geometries: Dict[int, arcpy.Geometry] = {}
         self.extents: Dict[int, Tuple[float, float, float, float]] = {}
+    
+    @staticmethod
+    def compute_optimal_cell_size(
+        geometries: Dict[int, "arcpy.Geometry"],
+        multiplier: float = 2.0,
+        min_size: float = 10.0
+    ) -> float:
+        """
+        Compute a cell size suitable for the supplied features.
+        
+        Args:
+            geometries: Mapping of feature-id → ArcPy geometry.
+            multiplier: Factor applied to the average extent (default 2×).
+            min_size: Minimum returned cell size.
+        
+        Returns:
+            Recommended cell size in the geometry's map units.
+        """
+        total_w = 0.0
+        total_h = 0.0
+        count = 0
+        for geom in geometries.values():
+            ext = get_geometry_extent(geom)
+            if ext:
+                total_w += ext[2] - ext[0]
+                total_h += ext[3] - ext[1]
+                count += 1
+        if count == 0:
+            return min_size
+        avg = (total_w + total_h) / (2 * count)
+        return max(avg * multiplier, min_size)
     
     def insert(self, fid: int, geometry) -> None:
         """

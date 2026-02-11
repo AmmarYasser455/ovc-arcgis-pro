@@ -20,7 +20,10 @@ OVC (Overlap Violation Checker) is a native ArcGIS Pro quality control toolbox d
 
 - **Building Overlap Detection** – Identifies overlapping polygons with classification (duplicate, partial, sliver)
 - **Building-Road Conflict Detection** – Finds buildings that encroach on road buffers
-- **Automatic Coordinate System Handling** – Auto-projects geographic data to UTM for accurate area calculations
+- **Road Dangle Detection** – O(n) spatial-hash endpoint matching (seconds, not hours)
+- **Road Disconnected Segment Detection** – Finds completely isolated road segments
+- **Road Self-Intersection Detection** – Finds roads that cross themselves
+- **Automatic Coordinate System Handling** – Auto-projects geographic data to UTM for accurate calculations
 - **Spatial Indexing** – Grid-based optimization for performance with large datasets
 - **Native ArcGIS Pro Integration** – Runs in background, supports selections, auto-adds results to map
 
@@ -55,6 +58,17 @@ OVC (Overlap Violation Checker) is a native ArcGIS Pro quality control toolbox d
 |------|----------|-------------|
 | Building Overlap Checker | Building QC | Detects overlapping polygons and classifies by severity |
 | Building-Road Conflict Checker | Building QC | Finds buildings within road buffer zones |
+| Road Dangle Checker | Road QC | Detects dangling endpoints in road networks (O(n) spatial hash) |
+| Road Disconnected Segment Checker | Road QC | Finds completely isolated road segments |
+| Road Self-Intersection Checker | Road QC | Finds roads that cross themselves |
+
+### Cross-Repo Parity
+
+This ArcGIS Pro toolbox shares validation logic and thresholds with the
+[OVC open-source Python library](https://github.com/AmmarYasser455/ovc)
+(GeoPandas/Shapely). Both projects use the same overlap classification
+thresholds, UTM auto-projection strategy, and spatial index approach so
+that results are consistent regardless of which tool you run.
 
 ## Basic Usage
 
@@ -93,7 +107,7 @@ OVC (Overlap Violation Checker) is a native ArcGIS Pro quality control toolbox d
 
 ```
 ovc-arcgis-pro/
-├── OVCToolbox.pyt          # Main Python Toolbox file
+├── OVCToolbox.pyt          # Main Python Toolbox file (5 tools)
 ├── README.md               # This file
 ├── TOOL_USAGE.md           # Detailed usage guide
 ├── ARCHITECTURE.md         # Technical documentation
@@ -104,20 +118,30 @@ ovc-arcgis-pro/
 │   └── spatial_ops.py      # Spatial index and operations
 ├── checks/                 # QC check implementations
 │   ├── building_overlap.py
-│   └── building_road_conflict.py
+│   ├── building_road_conflict.py
+│   └── road_qc/
+│       ├── __init__.py
+│       └── engine.py       # O(n) spatial-hash road QC algorithms
 └── utils/                  # Helper utilities
     ├── cursor_helpers.py   # Data access functions
     └── messaging.py        # Progress and logging
 ```
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for version history.
+
 ## Performance
 
-| Dataset Size | Building Overlap | Building-Road Conflict |
-|--------------|------------------|------------------------|
-| 5,000 features | ~30 seconds | ~1 minute |
-| 50,000 features | ~5 minutes | ~10 minutes |
+| Dataset Size | Building Overlap | Building-Road Conflict | Road QC (all 3 checks) |
+|--------------|------------------|------------------------|------------------------|
+| 5,000 features | ~20 seconds | ~40 seconds | ~2 seconds |
+| 10,000 features | ~45 seconds | ~90 seconds | ~5 seconds |
+| 50,000 features | ~4 minutes | ~8 minutes | ~20 seconds |
 
-Performance depends on data density and overlap frequency. Spatial indexing reduces processing time significantly for large datasets.
+**Road QC v3.0.0 speedup:** Dangle detection was rewritten from O(n²) nested
+loop to O(n) spatial-hash indexing.  The same Giza dataset (8,981 roads)
+went from **48 minutes → ~3 seconds** — a ~1,000× improvement.
 
 ## Known Limitations
 

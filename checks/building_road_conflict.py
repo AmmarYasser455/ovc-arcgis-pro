@@ -297,9 +297,20 @@ class BuildingRoadConflictChecker:
         results = []
         
         # Build spatial index for buildings (grid-based)
+        # Adaptive spatial index: cell size based on average building extent
         self.messenger.info("Building spatial index for buildings...")
-        building_index = SpatialIndex(cell_size=100.0)  # 100m grid cells
+        total_w = 0
+        total_h = 0
         building_extents = {}
+        for fid, geom in buildings.items():
+            extent = get_geometry_extent(geom)
+            if extent:
+                building_extents[fid] = extent
+                total_w += extent[2] - extent[0]
+                total_h += extent[3] - extent[1]
+        avg_sz = max((total_w + total_h) / (2 * max(len(building_extents), 1)), 10.0)
+        cell_sz = max(avg_sz * 3, buffer_distance * 2)
+        building_index = SpatialIndex(cell_size=cell_sz)
         
         for fid, geom in buildings.items():
             extent = get_geometry_extent(geom)
@@ -307,8 +318,29 @@ class BuildingRoadConflictChecker:
                 building_extents[fid] = extent
                 building_index.insert(fid, geom)  # Pass geometry, not extent
         
-        # Process each road
-        total_roads = len(roads)
+        # Pre-buffer all roads in batch for better performance
+        self.messenger.info("Buffering roads...")
+        buffered_roads = {}
+        buffered_extents = {}
+        for road_fid, road_geom in roads.items():
+            if not validate_line_geometry(road_geom):
+                continue
+            buffered = buffer_geometry(road_geom, buffer_distance)
+            if buffered is None:
+                continue
+            bext = get_geometry_extent(buffered)
+            if bext is None:
+                continue
+            buffered_roads[road_fid] = buffered
+            buffered_extents[road_fid] = bext
+        
+        self.messenger.info(
+            f"Buffered {format_number(len(buffered_roads), 0)} of "
+            f"{format_number(len(roads), 0)} roads"
+        )
+        
+        # Process each buffered road against the building spatial index
+        total_roads = len(buffered_roads)
         progress = ProgressTracker(
             "Checking road conflicts",
             total_roads,
@@ -316,20 +348,10 @@ class BuildingRoadConflictChecker:
         )
         progress.start()
         
-        for idx, (road_fid, road_geom) in enumerate(roads.items()):
+        for idx, (road_fid, buffered) in enumerate(buffered_roads.items()):
             progress.update(idx)
             
-            if not validate_line_geometry(road_geom):
-                continue
-            
-            # Buffer the road
-            buffered = buffer_geometry(road_geom, buffer_distance)
-            if buffered is None:
-                continue
-            
-            buffer_extent = get_geometry_extent(buffered)
-            if buffer_extent is None:
-                continue
+            buffer_extent = buffered_extents[road_fid]
             
             # Query spatial index for candidate buildings
             candidates = building_index.query_by_extent(buffer_extent)

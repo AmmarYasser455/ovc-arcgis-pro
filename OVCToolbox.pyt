@@ -7,7 +7,7 @@ A production-quality spatial QC toolbox for detecting geometry violations
 in polygon and line feature classes.
 
 Author: Ammar Yasser
-Version: 1.0.0
+Version: 3.0.0
 """
 
 import arcpy
@@ -35,8 +35,9 @@ class Toolbox(object):
         self.tools = [
             BuildingOverlapChecker,
             BuildingRoadConflictChecker,
-            # Future tools:
-            # RoadDangleChecker,
+            RoadDangleChecker,
+            RoadDisconnectedChecker,
+            RoadSelfIntersectionChecker,
         ]
 
 
@@ -439,26 +440,537 @@ class BuildingRoadConflictChecker(object):
         return
 
 
+# ─────────────────────────────────────────────────────────────────────
+# ROAD QC  –  shared helpers (used by all three road tools)
+# ─────────────────────────────────────────────────────────────────────
+
+def _auto_project_roads(road_features):
+    """
+    If *road_features* is in a geographic CRS, project to the
+    appropriate UTM zone in scratchGDB and return
+    ``(working_fc, utm_sr, temp_path)``.
+    If already projected, return ``(road_features, sr, None)``.
+    """
+    from core.geometry import ensure_projected_crs
+    from utils.cursor_helpers import get_spatial_reference
+
+    sr = get_spatial_reference(road_features)
+    if ensure_projected_crs(sr):
+        return road_features, sr, None
+
+    desc = arcpy.Describe(road_features)
+    ext = desc.extent
+    lon = (ext.XMin + ext.XMax) / 2
+    lat = (ext.YMin + ext.YMax) / 2
+    zone = int((lon + 180) / 6) + 1
+    epsg = (32600 if lat >= 0 else 32700) + zone
+    utm_sr = arcpy.SpatialReference(epsg)
+
+    scratch = arcpy.env.scratchGDB
+    temp_fc = os.path.join(scratch, "ovc_temp_roads_proj")
+    if arcpy.Exists(temp_fc):
+        arcpy.management.Delete(temp_fc)
+    arcpy.management.Project(road_features, temp_fc, utm_sr)
+    return temp_fc, utm_sr, temp_fc
+
+
+def _extract_endpoints(geom):
+    """Return list of (x, y) tuples for start/end of each part."""
+    endpoints = []
+    for part in geom:
+        if part is None or len(part) < 2:
+            continue
+        s = part[0]
+        e = part[len(part) - 1]
+        if s is not None:
+            endpoints.append((s.X, s.Y))
+        if e is not None:
+            endpoints.append((e.X, e.Y))
+    return endpoints
+
+
+def _extract_vertices(geom):
+    """Return list-of-parts, each part a list of (x, y)."""
+    parts = []
+    for part in geom:
+        if part is None:
+            continue
+        pts = [(pt.X, pt.Y) for pt in part if pt is not None]
+        if len(pts) >= 2:
+            parts.append(pts)
+    return parts
+
+
+def _cleanup(path):
+    if path and arcpy.Exists(path):
+        try:
+            arcpy.management.Delete(path)
+        except Exception:
+            pass
+
+
+def _add_to_map(output_fc):
+    """Try to add a feature class to the active map."""
+    try:
+        if arcpy.Exists(output_fc):
+            aprx = arcpy.mp.ArcGISProject("CURRENT")
+            active_map = aprx.activeMap
+            if active_map:
+                layer_exists = any(
+                    lyr.name == os.path.basename(output_fc)
+                    for lyr in active_map.listLayers()
+                )
+                if not layer_exists:
+                    active_map.addDataFromPath(output_fc)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Tool 3 – Road Dangle Checker  (O(n) spatial-hash)
+# ─────────────────────────────────────────────────────────────────────
+
 class RoadDangleChecker(object):
     """
-    Road Dangle Checker Tool.
-    
-    Detects dangling endpoints in road networks.
-    [Placeholder - to be implemented in Phase 3]
+    Detects dangling endpoints in road networks — line endpoints
+    that do not connect to any other road within a snap tolerance.
+
+    Uses spatial-hash indexing for O(n) performance.
     """
-    
+
     def __init__(self):
         self.label = "Road Dangle Checker"
-        self.description = "Detects dangling endpoints in road networks."
+        self.description = (
+            "Detects dangling endpoints in road networks where "
+            "line endpoints do not connect to any other road. "
+            "Uses spatial-hash indexing for fast O(n) processing."
+        )
         self.canRunInBackground = True
         self.category = "Road QC"
-    
+
     def getParameterInfo(self):
-        return []
-    
+        param_roads = arcpy.Parameter(
+            displayName="Road Features",
+            name="road_features",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input",
+        )
+        param_roads.filter.list = ["Polyline"]
+
+        param_tol = arcpy.Parameter(
+            displayName="Snap Tolerance (meters)",
+            name="dangle_tolerance",
+            datatype="GPDouble",
+            parameterType="Optional",
+            direction="Input",
+        )
+        param_tol.value = 0.5
+        param_tol.filter.type = "Range"
+        param_tol.filter.list = [0.01, 100.0]
+
+        param_output = arcpy.Parameter(
+            displayName="Output Feature Class",
+            name="output_features",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output",
+        )
+
+        param_count = arcpy.Parameter(
+            displayName="Dangle Count",
+            name="dangle_count",
+            datatype="GPLong",
+            parameterType="Derived",
+            direction="Output",
+        )
+
+        return [param_roads, param_tol, param_output, param_count]
+
     def isLicensed(self):
         return True
-    
-    def execute(self, parameters, messages):
-        arcpy.AddError("This tool is not yet implemented.")
+
+    def updateParameters(self, parameters):
+        if parameters[0].altered and not parameters[2].altered:
+            if parameters[0].valueAsText:
+                base = os.path.splitext(os.path.basename(parameters[0].valueAsText))[0]
+                ws = arcpy.env.workspace or arcpy.env.scratchGDB
+                parameters[2].value = os.path.join(ws, f"{base}_dangles")
         return
+
+    def updateMessages(self, parameters):
+        return
+
+    def execute(self, parameters, messages):
+        """Execute the Road Dangle Checker."""
+        road_features = parameters[0].valueAsText
+        tolerance = parameters[1].value or 0.5
+        output_features = parameters[2].valueAsText
+
+        from checks.road_qc.engine import find_dangles
+        from core.geometry import validate_line_geometry
+        from utils.cursor_helpers import (
+            read_geometries_to_dict, get_spatial_reference, validate_feature_class,
+        )
+        from utils.messaging import ToolMessenger, format_number
+
+        messenger = ToolMessenger("RoadDangle")
+        messenger.start_timer()
+
+        # Validate
+        ok, err = validate_feature_class(road_features, required_geometry_type="Polyline")
+        if not ok:
+            arcpy.AddError(f"Invalid input: {err}")
+            return
+
+        # Auto-project if geographic
+        working_fc, proj_sr, temp_fc = _auto_project_roads(road_features)
+        if temp_fc:
+            messenger.info(f"Auto-projected to UTM (EPSG:{proj_sr.factoryCode})")
+
+        # Read projected geometries for analysis
+        proj_roads = read_geometries_to_dict(working_fc)
+        messenger.info(f"Loaded {format_number(len(proj_roads), 0)} road segments")
+
+        # Read original geometries for correct output coordinates
+        orig_roads = proj_roads if temp_fc is None else read_geometries_to_dict(road_features)
+
+        # Build endpoint dict (projected coords for analysis)
+        ep_dict = {}
+        for fid, geom in proj_roads.items():
+            if not validate_line_geometry(geom):
+                continue
+            ep_dict[fid] = _extract_endpoints(geom)
+
+        total_eps = sum(len(v) for v in ep_dict.values())
+        messenger.info(f"Collected {format_number(total_eps, 0)} endpoints")
+
+        # Run spatial-hash dangle detection
+        dangles = find_dangles(ep_dict, tolerance)
+        messenger.info(f"Found {format_number(len(dangles), 0)} dangling endpoints")
+
+        # Build original-CRS endpoint map for output
+        orig_ep_dict = {}
+        for fid, geom in orig_roads.items():
+            if fid in ep_dict:
+                orig_ep_dict[fid] = _extract_endpoints(geom)
+
+        # Write output in ORIGINAL CRS
+        out_dir = os.path.dirname(output_features)
+        out_name = os.path.basename(output_features)
+        original_sr = get_spatial_reference(road_features)
+
+        if arcpy.Exists(output_features):
+            arcpy.management.Delete(output_features)
+        arcpy.management.CreateFeatureclass(out_dir, out_name, "POINT", spatial_reference=original_sr)
+        arcpy.management.AddField(output_features, "ROAD_FID", "LONG")
+
+        count = 0
+        with arcpy.da.InsertCursor(output_features, ["SHAPE@XY", "ROAD_FID"]) as cur:
+            for fid, _, _, ep_idx in dangles:
+                orig_pts = orig_ep_dict.get(fid)
+                if orig_pts and ep_idx < len(orig_pts):
+                    x, y = orig_pts[ep_idx]
+                    cur.insertRow(((x, y), fid))
+                    count += 1
+
+        _cleanup(temp_fc)
+
+        parameters[3].value = count
+        arcpy.SetParameterAsText(2, output_features)
+
+        messenger.report_summary(
+            total_features=len(proj_roads),
+            violations_found=count,
+            additional_stats={"Tolerance": f"{tolerance} m"},
+        )
+
+    def postExecute(self, parameters):
+        _add_to_map(parameters[2].valueAsText)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Tool 4 – Road Disconnected Segment Checker
+# ─────────────────────────────────────────────────────────────────────
+
+class RoadDisconnectedChecker(object):
+    """
+    Detects completely disconnected road segments — segments whose
+    EVERY endpoint is a dangle (no connection to the rest of the
+    network).
+    """
+
+    def __init__(self):
+        self.label = "Road Disconnected Segment Checker"
+        self.description = (
+            "Finds road segments that are completely isolated from "
+            "the network — neither start nor end connects to any "
+            "other road within the snap tolerance."
+        )
+        self.canRunInBackground = True
+        self.category = "Road QC"
+
+    def getParameterInfo(self):
+        param_roads = arcpy.Parameter(
+            displayName="Road Features",
+            name="road_features",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input",
+        )
+        param_roads.filter.list = ["Polyline"]
+
+        param_tol = arcpy.Parameter(
+            displayName="Snap Tolerance (meters)",
+            name="dangle_tolerance",
+            datatype="GPDouble",
+            parameterType="Optional",
+            direction="Input",
+        )
+        param_tol.value = 0.5
+        param_tol.filter.type = "Range"
+        param_tol.filter.list = [0.01, 100.0]
+
+        param_output = arcpy.Parameter(
+            displayName="Output Feature Class",
+            name="output_features",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output",
+        )
+
+        param_count = arcpy.Parameter(
+            displayName="Disconnected Count",
+            name="disconnected_count",
+            datatype="GPLong",
+            parameterType="Derived",
+            direction="Output",
+        )
+
+        return [param_roads, param_tol, param_output, param_count]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        if parameters[0].altered and not parameters[2].altered:
+            if parameters[0].valueAsText:
+                base = os.path.splitext(os.path.basename(parameters[0].valueAsText))[0]
+                ws = arcpy.env.workspace or arcpy.env.scratchGDB
+                parameters[2].value = os.path.join(ws, f"{base}_disconnected")
+        return
+
+    def updateMessages(self, parameters):
+        return
+
+    def execute(self, parameters, messages):
+        """Execute the Road Disconnected Segment Checker."""
+        road_features = parameters[0].valueAsText
+        tolerance = parameters[1].value or 0.5
+        output_features = parameters[2].valueAsText
+
+        from checks.road_qc.engine import find_disconnected
+        from core.geometry import validate_line_geometry
+        from utils.cursor_helpers import (
+            read_geometries_to_dict, get_spatial_reference, validate_feature_class,
+        )
+        from utils.messaging import ToolMessenger, format_number
+
+        messenger = ToolMessenger("RoadDisconnected")
+        messenger.start_timer()
+
+        ok, err = validate_feature_class(road_features, required_geometry_type="Polyline")
+        if not ok:
+            arcpy.AddError(f"Invalid input: {err}")
+            return
+
+        working_fc, proj_sr, temp_fc = _auto_project_roads(road_features)
+        if temp_fc:
+            messenger.info(f"Auto-projected to UTM (EPSG:{proj_sr.factoryCode})")
+
+        proj_roads = read_geometries_to_dict(working_fc)
+        messenger.info(f"Loaded {format_number(len(proj_roads), 0)} road segments")
+
+        orig_roads = proj_roads if temp_fc is None else read_geometries_to_dict(road_features)
+
+        ep_dict = {}
+        for fid, geom in proj_roads.items():
+            if not validate_line_geometry(geom):
+                continue
+            ep_dict[fid] = _extract_endpoints(geom)
+
+        disconnected_fids, _ = find_disconnected(ep_dict, tolerance)
+        messenger.info(
+            f"Found {format_number(len(disconnected_fids), 0)} disconnected segments"
+        )
+
+        # Write output — copy the original line geometries for disconnected roads
+        out_dir = os.path.dirname(output_features)
+        out_name = os.path.basename(output_features)
+        original_sr = get_spatial_reference(road_features)
+
+        if arcpy.Exists(output_features):
+            arcpy.management.Delete(output_features)
+        arcpy.management.CreateFeatureclass(
+            out_dir, out_name, "POLYLINE", spatial_reference=original_sr,
+        )
+        arcpy.management.AddField(output_features, "ROAD_FID", "LONG")
+
+        disc_set = set(disconnected_fids)
+        count = 0
+        with arcpy.da.InsertCursor(output_features, ["SHAPE@", "ROAD_FID"]) as cur:
+            for fid in disconnected_fids:
+                geom = orig_roads.get(fid)
+                if geom is not None:
+                    cur.insertRow((geom, fid))
+                    count += 1
+
+        _cleanup(temp_fc)
+
+        parameters[3].value = count
+        arcpy.SetParameterAsText(2, output_features)
+
+        messenger.report_summary(
+            total_features=len(proj_roads),
+            violations_found=count,
+            additional_stats={"Tolerance": f"{tolerance} m"},
+        )
+
+    def postExecute(self, parameters):
+        _add_to_map(parameters[2].valueAsText)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Tool 5 – Road Self-Intersection Checker
+# ─────────────────────────────────────────────────────────────────────
+
+class RoadSelfIntersectionChecker(object):
+    """
+    Detects road segments that cross themselves.
+    """
+
+    def __init__(self):
+        self.label = "Road Self-Intersection Checker"
+        self.description = (
+            "Finds road segments that cross themselves — a common "
+            "digitization error indicating geometry corruption."
+        )
+        self.canRunInBackground = True
+        self.category = "Road QC"
+
+    def getParameterInfo(self):
+        param_roads = arcpy.Parameter(
+            displayName="Road Features",
+            name="road_features",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input",
+        )
+        param_roads.filter.list = ["Polyline"]
+
+        param_output = arcpy.Parameter(
+            displayName="Output Feature Class",
+            name="output_features",
+            datatype="DEFeatureClass",
+            parameterType="Required",
+            direction="Output",
+        )
+
+        param_count = arcpy.Parameter(
+            displayName="Self-Intersection Count",
+            name="selfx_count",
+            datatype="GPLong",
+            parameterType="Derived",
+            direction="Output",
+        )
+
+        return [param_roads, param_output, param_count]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        if parameters[0].altered and not parameters[1].altered:
+            if parameters[0].valueAsText:
+                base = os.path.splitext(os.path.basename(parameters[0].valueAsText))[0]
+                ws = arcpy.env.workspace or arcpy.env.scratchGDB
+                parameters[1].value = os.path.join(ws, f"{base}_self_intersections")
+        return
+
+    def updateMessages(self, parameters):
+        return
+
+    def execute(self, parameters, messages):
+        """Execute the Road Self-Intersection Checker."""
+        road_features = parameters[0].valueAsText
+        output_features = parameters[1].valueAsText
+
+        from checks.road_qc.engine import find_self_intersections
+        from core.geometry import validate_line_geometry
+        from utils.cursor_helpers import (
+            read_geometries_to_dict, get_spatial_reference, validate_feature_class,
+        )
+        from utils.messaging import ToolMessenger, format_number
+
+        messenger = ToolMessenger("RoadSelfIntersection")
+        messenger.start_timer()
+
+        ok, err = validate_feature_class(road_features, required_geometry_type="Polyline")
+        if not ok:
+            arcpy.AddError(f"Invalid input: {err}")
+            return
+
+        # Self-intersection uses vertex coordinates directly — no projection
+        # needed (we only test topological crossing, not metric distance).
+        # But if we need output in original CRS we keep both.
+        working_fc, proj_sr, temp_fc = _auto_project_roads(road_features)
+        if temp_fc:
+            messenger.info(f"Auto-projected to UTM (EPSG:{proj_sr.factoryCode})")
+
+        proj_roads = read_geometries_to_dict(working_fc)
+        messenger.info(f"Loaded {format_number(len(proj_roads), 0)} road segments")
+
+        orig_roads = proj_roads if temp_fc is None else read_geometries_to_dict(road_features)
+
+        # Build vertex dict (use original CRS coords for output-ready points)
+        orig_verts = {}
+        for fid, geom in orig_roads.items():
+            if not validate_line_geometry(geom):
+                continue
+            orig_verts[fid] = _extract_vertices(geom)
+
+        selfx = find_self_intersections(orig_verts)
+        messenger.info(
+            f"Found {format_number(len(selfx), 0)} self-intersecting segments"
+        )
+
+        # Write output points in original CRS
+        out_dir = os.path.dirname(output_features)
+        out_name = os.path.basename(output_features)
+        original_sr = get_spatial_reference(road_features)
+
+        if arcpy.Exists(output_features):
+            arcpy.management.Delete(output_features)
+        arcpy.management.CreateFeatureclass(
+            out_dir, out_name, "POINT", spatial_reference=original_sr,
+        )
+        arcpy.management.AddField(output_features, "ROAD_FID", "LONG")
+
+        count = 0
+        with arcpy.da.InsertCursor(output_features, ["SHAPE@XY", "ROAD_FID"]) as cur:
+            for fid, ix, iy in selfx:
+                cur.insertRow(((ix, iy), fid))
+                count += 1
+
+        _cleanup(temp_fc)
+
+        parameters[2].value = count
+        arcpy.SetParameterAsText(1, output_features)
+
+        messenger.report_summary(
+            total_features=len(proj_roads),
+            violations_found=count,
+        )
+
+    def postExecute(self, parameters):
+        _add_to_map(parameters[1].valueAsText)
