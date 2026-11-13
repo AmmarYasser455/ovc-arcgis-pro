@@ -98,7 +98,8 @@ def find_disconnected(
 ) -> Tuple[List[int], List[Tuple[int, float, float, int]]]:
     """
     Find completely disconnected road segments — segments whose
-    **every** endpoint is a dangle.
+    **every** endpoint is a dangle.  Roads with no endpoints (null or
+    empty geometry) are ignored rather than reported.
 
     Returns
     -------
@@ -115,7 +116,7 @@ def find_disconnected(
     disconnected = [
         fid
         for fid, pts in endpoints_by_road.items()
-        if dangle_count.get(fid, 0) >= len(pts)
+        if pts and dangle_count.get(fid, 0) >= len(pts)
     ]
     return disconnected, dangles
 
