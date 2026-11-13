@@ -205,6 +205,10 @@ def find_self_intersections(
                     break
                 # Only compare non-adjacent segments
                 for j in range(i + 2, n - 1):
+                    # First and last segments of a closed ring share
+                    # the closing vertex; that is not a self-crossing.
+                    if i == 0 and j == n - 2 and part[0] == part[-1]:
+                        continue
                     if _segments_cross(part[i], part[i + 1],
                                        part[j], part[j + 1]):
                         pt = _intersection_point(

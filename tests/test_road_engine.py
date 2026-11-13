@@ -49,3 +49,8 @@ def test_no_self_intersection_simple_line():
 
 def test_short_part_ignored():
     assert find_self_intersections({1: [[(0, 0), (1, 1), (2, 0)]]}) == []
+
+
+def test_closed_ring_is_not_self_intersecting():
+    ring = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
+    assert find_self_intersections({1: [ring]}) == []
