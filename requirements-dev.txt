@@ -1,0 +1,3 @@
+# Test-only dependencies (arcpy is stubbed in tests/conftest.py).
+pytest
+ruff
