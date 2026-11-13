@@ -87,7 +87,13 @@ To install geoqa into ArcGIS Pro's Python environment:
 ```
 # In ArcGIS Pro's Python Command Prompt:
 pip install geoqa
+# or, from the repository root:
+pip install -r requirements.txt
 ```
+
+`arcpy` is provided by ArcGIS Pro and is intentionally not listed in
+`requirements.txt`. To run the test suite (which stubs `arcpy`), use
+`pip install -r requirements-dev.txt` and then `python -m pytest`.
 
 ## Basic Usage
 

@@ -1,0 +1,7 @@
+# Runtime dependencies for the OVC ArcGIS Pro toolbox.
+#
+# arcpy is NOT listed: it is provided by ArcGIS Pro's bundled Python
+# environment and cannot be installed with pip.
+#
+# Optional: automatic data quality pre-check (tools skip it if missing).
+geoqa
