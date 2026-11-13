@@ -35,6 +35,14 @@ def test_find_disconnected():
     assert {d[0] for d in dangles} == {1, 2, 3}
 
 
+def test_find_disconnected_ignores_roads_without_endpoints():
+    # A null/empty geometry yields no endpoints and must not be reported.
+    eps = {1: [(0.0, 0.0), (10.0, 0.0)], 2: []}
+    disc, dangles = find_disconnected(eps, tolerance=0.5)
+    assert disc == [1]
+    assert {d[0] for d in dangles} == {1}
+
+
 def test_self_intersection_bowtie():
     verts = {1: [[(0, 0), (10, 10), (10, 0), (0, 10)]]}
     res = find_self_intersections(verts)
