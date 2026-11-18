@@ -51,16 +51,18 @@ def find_dangles(
     list of (road_fid, x, y, endpoint_index)
     """
     cell = max(tolerance, 1e-9)
+    # Endpoints of the *same* road only connect when they coincide exactly
+    # (a closed loop); near-misses within tolerance remain dangles.
     tol_sq = tolerance * tolerance
 
     # 1. Flatten + build spatial hash
-    grid: Dict[Tuple[int, int], List[Tuple[int, float, float]]] = defaultdict(list)
+    grid: Dict[Tuple[int, int], List[Tuple[int, float, float, int]]] = defaultdict(list)
     all_eps: List[Tuple[int, float, float, int]] = []
 
     for fid, pts in endpoints_by_road.items():
         for i, (x, y) in enumerate(pts):
             all_eps.append((fid, x, y, i))
-            grid[_grid_key(x, y, cell)].append((fid, x, y))
+            grid[_grid_key(x, y, cell)].append((fid, x, y, i))
 
     # 2. Check each endpoint against 3×3 neighbourhood
     dangles: List[Tuple[int, float, float, int]] = []
@@ -74,9 +76,12 @@ def find_dangles(
                 bucket = grid.get((gx + dx, gy + dy))
                 if bucket is None:
                     continue
-                for ofid, ox, oy in bucket:
+                for ofid, ox, oy, oidx in bucket:
                     if ofid == fid:
-                        continue
+                        if oidx == ep_idx or (x, y) != (ox, oy):
+                            continue
+                        connected = True
+                        break
                     if (x - ox) ** 2 + (y - oy) ** 2 <= tol_sq:
                         connected = True
                         break
