@@ -173,6 +173,14 @@ def _intersection_point(p1, q1, p2, q2) -> Optional[Tuple[float, float]]:
 
     denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
     if abs(denom) < 1e-12:
+        # Parallel segments: only reachable for collinear overlap or
+        # touching.  Report the first endpoint lying on the other segment.
+        for (px, py), (ax, ay), (bx, by) in (
+            (p1, p2, q2), (q1, p2, q2), (p2, p1, q1), (q2, p1, q1),
+        ):
+            if (_cross2d(ax, ay, bx, by, px, py) == 0
+                    and _on_segment(ax, ay, px, py, bx, by)):
+                return (px, py)
         return None
 
     t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
