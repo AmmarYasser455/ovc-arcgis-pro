@@ -15,6 +15,18 @@ def test_same_road_endpoints_do_not_connect():
     assert len(find_dangles({1: [(0, 0), (0.1, 0)]}, tolerance=0.5)) == 2
 
 
+def test_closed_loop_road_is_not_dangling():
+    # Start and end coincide (e.g. a roundabout): nothing dangles.
+    loop = {1: [(500000.0, 4649776.0), (500000.0, 4649776.0)]}
+    assert find_dangles(loop, tolerance=0.5) == []
+    assert find_disconnected(loop, tolerance=0.5)[0] == []
+
+
+def test_closed_loop_does_not_hide_other_dangle():
+    eps = {1: [(0, 0), (0, 0)], 2: [(5, 5), (9, 9)]}
+    assert {f for f, _, _, _ in find_dangles(eps, 0.5)} == {2}
+
+
 def test_outside_tolerance_is_dangle():
     assert len(find_dangles({1: [(0, 0)], 2: [(1, 0)]}, tolerance=0.5)) == 2
 
