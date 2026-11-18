@@ -71,6 +71,31 @@ def test_short_part_ignored():
     assert find_self_intersections({1: [[(0, 0), (1, 1), (2, 0)]]}) == []
 
 
+# Real-location fixture: a road near the Colosseum, Rome, in EPSG:32633
+# (UTM 33N, metres; x = easting, y = northing).  The road runs east along
+# one northing, continues, then doubles back over its own first stretch,
+# so the only intersection is a collinear overlap (no crossing point).
+_E0, _N0 = 291780.0, 4640640.0
+_DOUBLING_BACK = [
+    (_E0, _N0), (_E0 + 100.0, _N0), (_E0 + 120.0, _N0), (_E0 + 40.0, _N0),
+]
+
+
+def test_collinear_overlap_is_self_intersection():
+    res = find_self_intersections({1: [_DOUBLING_BACK]})
+    assert len(res) == 1
+    fid, x, y = res[0]
+    # Overlap is easting [E0+40, E0+100] along northing N0.
+    assert fid == 1 and y == _N0 and _E0 + 40.0 <= x <= _E0 + 100.0
+
+
+def test_collinear_overlap_reported_alongside_clean_road():
+    clean = [(_E0, _N0 + 50), (_E0 + 10, _N0 + 60),
+             (_E0 + 20, _N0 + 50), (_E0 + 30, _N0 + 60)]
+    res = find_self_intersections({7: [_DOUBLING_BACK], 8: [clean]})
+    assert [r[0] for r in res] == [7]
+
+
 def test_closed_ring_is_not_self_intersecting():
     ring = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
     assert find_self_intersections({1: [ring]}) == []
