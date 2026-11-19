@@ -164,6 +164,13 @@ def _segments_cross(p1, q1, p2, q2) -> bool:
     return False
 
 
+def _folds_back(a, b, c) -> bool:
+    """True when a->b->c is collinear and c lies back along b->a."""
+    if _cross2d(a[0], a[1], b[0], b[1], c[0], c[1]) != 0:
+        return False
+    return (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) < 0
+
+
 def _intersection_point(p1, q1, p2, q2) -> Optional[Tuple[float, float]]:
     """Return the intersection point of two crossing segments."""
     x1, y1 = p1
@@ -215,10 +222,16 @@ def find_self_intersections(
             # that would make neighbouring segments look non-adjacent.
             part = [v for k, v in enumerate(part) if k == 0 or v != part[k - 1]]
             n = len(part)
-            if n < 4:
+            if n < 3:
                 continue
             for i in range(n - 1):
                 if found:
+                    break
+                # A segment that doubles straight back over the previous
+                # one (A -> B -> A') overlaps itself along a collinear run.
+                if i + 2 < n and _folds_back(part[i], part[i + 1], part[i + 2]):
+                    results.append((fid, part[i + 1][0], part[i + 1][1]))
+                    found = True
                     break
                 # Only compare non-adjacent segments
                 for j in range(i + 2, n - 1):
