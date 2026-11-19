@@ -5,6 +5,19 @@ from checks.road_qc.engine import (
 )
 
 
+def test_spur_folding_back_is_self_overlap():
+    res = find_self_intersections({1: [[(0, 0), (10, 0), (4, 0)]]})
+    assert res == [(1, 10, 0)]
+
+
+def test_three_vertex_non_collinear_part_is_clean():
+    assert find_self_intersections({1: [[(0, 0), (10, 0), (10, 5)]]}) == []
+
+
+def test_collinear_continuation_is_not_fold_back():
+    assert find_self_intersections({1: [[(0, 0), (5, 0), (10, 0), (10, 5)]]}) == []
+
+
 def test_connected_endpoints_are_not_dangles():
     eps = {1: [(0, 0), (10, 0)], 2: [(10, 0.1), (20, 0)]}
     dangles = find_dangles(eps, tolerance=0.5)
