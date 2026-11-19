@@ -99,3 +99,16 @@ def test_collinear_overlap_reported_alongside_clean_road():
 def test_closed_ring_is_not_self_intersecting():
     ring = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
     assert find_self_intersections({1: [ring]}) == []
+
+
+def test_duplicate_vertices_are_not_self_intersection():
+    # Repeated vertex B (UTM 36N metres, Cairo area) must not be a crossing.
+    a, b = (310000.0, 3320000.0), (310100.0, 3320000.0)
+    c, d = (310100.0, 3320100.0), (310200.0, 3320100.0)
+    assert find_self_intersections({1: [[a, b, b, c, d]]}) == []
+
+
+def test_duplicate_vertices_do_not_hide_real_crossing():
+    pts = [(0, 0), (4, 4), (4, 4), (4, 0), (0, 4)]
+    res = find_self_intersections({7: [pts]})
+    assert len(res) == 1 and res[0][0] == 7
