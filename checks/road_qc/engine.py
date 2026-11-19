@@ -211,6 +211,9 @@ def find_self_intersections(
         for part in parts:
             if found:
                 break
+            # Repeated consecutive vertices create zero-length segments
+            # that would make neighbouring segments look non-adjacent.
+            part = [v for k, v in enumerate(part) if k == 0 or v != part[k - 1]]
             n = len(part)
             if n < 4:
                 continue
