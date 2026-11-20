@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/images/ovc_arcpro.png" alt="ovc-arcgis-pro logo" width="112">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/logo-dark.svg">
+    <img src="assets/brand/logo.svg" alt="ovc-arcgis-pro logo" width="200">
+  </picture>
 </p>
 
 # OVC – Overlap Violation Checker for ArcGIS Pro
