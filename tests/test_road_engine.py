@@ -1,3 +1,5 @@
+import pytest
+
 from checks.road_qc.engine import (
     find_dangles,
     find_disconnected,
@@ -125,3 +127,92 @@ def test_duplicate_vertices_do_not_hide_real_crossing():
     pts = [(0, 0), (4, 4), (4, 4), (4, 0), (0, 4)]
     res = find_self_intersections({7: [pts]})
     assert len(res) == 1 and res[0][0] == 7
+
+
+_EPS = {1: [(0, 0)], 2: [(0.1, 0)]}
+_NAN = float("nan")
+_INF = float("inf")
+
+_DANGLE_FUNCS = [("find_dangles", find_dangles), ("find_disconnected", find_disconnected)]
+
+_CASES = (
+    # (endpoints_or_vertices, tolerance, expected exception) for both
+    # tolerance-based functions
+    [
+        (name, f, roads, tol, exc)
+        for name, f in _DANGLE_FUNCS
+        for roads, tol, exc in [
+            (_EPS, -0.5, ValueError),
+            (_EPS, -1, ValueError),
+            (_EPS, _NAN, ValueError),
+            (_EPS, _INF, ValueError),
+            (_EPS, -_INF, ValueError),
+            (_EPS, None, TypeError),
+            (_EPS, "0.5", TypeError),
+            (_EPS, True, TypeError),
+            (_EPS, [0.5], TypeError),
+            (_EPS, {"tol": 0.5}, TypeError),
+            (None, 0.5, TypeError),
+            ([[(0, 0)]], 0.5, TypeError),
+            ("roads", 0.5, TypeError),
+            ({1: [(_NAN, 0.0)]}, 0.5, ValueError),
+            ({1: [(0.0, _INF)]}, 0.5, ValueError),
+            ({1: [(None, 0.0)]}, 0.5, TypeError),
+            ({1: [("31.2", "30.0")]}, 0.5, TypeError),
+            ({1: [(0.0, 0.0, 0.0)]}, 0.5, TypeError),
+            ({1: [(0.0,)]}, 0.5, TypeError),
+            ({1: ["xy"]}, 0.5, TypeError),
+            ({1: [None]}, 0.5, TypeError),
+            ({1: None}, 0.5, TypeError),
+        ]
+    ]
+    # vertices_by_road for find_self_intersections (no tolerance)
+    + [
+        ("find_self_intersections", find_self_intersections, roads, None, exc)
+        for roads, exc in [
+            (None, TypeError),
+            ([[[(0, 0), (1, 1)]]], TypeError),
+            ("roads", TypeError),
+            ({1: [[(0, 0), (_NAN, 1), (2, 0)]]}, ValueError),
+            ({1: [[(0, 0), (1, -_INF), (2, 0)]]}, ValueError),
+            ({1: [[(0, 0), (None, 1), (2, 0)]]}, TypeError),
+            ({1: [[(0, 0), ("1", "1"), (2, 0)]]}, TypeError),
+            ({1: [[(0, 0), (1, 1, 5), (2, 0)]]}, TypeError),
+            ({1: [[(0, 0), None, (2, 0)]]}, TypeError),
+            ({1: None}, TypeError),
+        ]
+    ]
+)
+
+
+@pytest.mark.parametrize(
+    "name, func, roads, tolerance, exc",
+    _CASES,
+    ids=[f"{c[0]}-{i}" for i, c in enumerate(_CASES)],
+)
+def test_invalid_input_is_rejected(name, func, roads, tolerance, exc):
+    args = (roads,) if name == "find_self_intersections" else (roads, tolerance)
+    with pytest.raises(exc):
+        func(*args)
+
+
+def test_empty_mapping_and_int_tolerance_are_accepted():
+    assert find_dangles({}, 0) == []
+    assert find_disconnected({}, 1) == ([], [])
+    assert find_self_intersections({}) == []
+    assert find_dangles({1: [(0, 0)], 2: [(1, 0)]}, 1) == []
+    # Tuples, lists and generators of parts are all accepted
+    bowtie = [(0, 0), (4, 4), (4, 0), (0, 4)]
+    assert len(find_self_intersections({1: (p for p in [bowtie])})) == 1
+    assert find_dangles({1: [[0, 0]], 2: [[1, 0]]}, 1) == []
+
+
+def test_zero_tolerance_requires_exact_match():
+    # UTM 36N-style coordinates (Cairo area), metres
+    a = (311000.0, 3323000.0)
+    eps = {1: [a], 2: [a], 3: [(311000.001, 3323000.0)]}
+    assert {f for f, _, _, _ in find_dangles(eps, tolerance=0)} == {3}
+
+
+def test_endpoint_exactly_at_tolerance_connects():
+    assert find_dangles({1: [(0, 0)], 2: [(0.5, 0)]}, tolerance=0.5) == []
