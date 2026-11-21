@@ -53,6 +53,13 @@ class SpatialIndex:
         Args:
             cell_size: Grid cell size in map units
         """
+        if (isinstance(cell_size, bool)
+                or not isinstance(cell_size, (int, float))
+                or not cell_size > 0
+                or cell_size == float("inf")):
+            raise ValueError(
+                "cell_size must be a finite number > 0, got %r" % (cell_size,)
+            )
         self.cell_size = cell_size
         self.grid: Dict[Tuple[int, int], List[int]] = {}
         self.geometries: Dict[int, arcpy.Geometry] = {}
@@ -104,6 +111,10 @@ class SpatialIndex:
         if extent is None:
             return
         
+        # Re-inserting an existing fid replaces it: drop stale grid entries
+        if fid in self.extents:
+            self.remove(fid)
+
         self.geometries[fid] = geometry
         self.extents[fid] = extent
         
@@ -121,6 +132,24 @@ class SpatialIndex:
                     self.grid[key] = []
                 self.grid[key].append(fid)
     
+    def remove(self, fid: int) -> None:
+        """Remove a feature from the index (no-op if it is not indexed)."""
+        extent = self.extents.pop(fid, None)
+        self.geometries.pop(fid, None)
+        if extent is None:
+            return
+        xmin, ymin, xmax, ymax = extent
+        for col in range(int(xmin // self.cell_size), int(xmax // self.cell_size) + 1):
+            for row in range(int(ymin // self.cell_size), int(ymax // self.cell_size) + 1):
+                ids = self.grid.get((col, row))
+                if ids is None:
+                    continue
+                ids = [i for i in ids if i != fid]
+                if ids:
+                    self.grid[(col, row)] = ids
+                else:
+                    del self.grid[(col, row)]
+
     def query_candidates(self, fid: int) -> List[int]:
         """
         Find candidate features that may intersect with the given feature.
