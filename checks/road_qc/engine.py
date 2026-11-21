@@ -14,7 +14,10 @@ Algorithms
   line-segment intersection math
 """
 
+import math
 from collections import defaultdict
+from collections.abc import Mapping
+from numbers import Real
 from typing import Dict, List, Tuple, Optional
 
 
@@ -25,6 +28,48 @@ from typing import Dict, List, Tuple, Optional
 def _grid_key(x: float, y: float, cell: float) -> Tuple[int, int]:
     """Return the grid cell that contains (x, y)."""
     return (int(x // cell), int(y // cell))
+
+
+# ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
+
+def _check_mapping(value, name: str) -> None:
+    """Raise TypeError unless *value* is a ``{road_fid: …}`` mapping."""
+    if not isinstance(value, Mapping):
+        raise TypeError(
+            f"{name} must be a mapping of road_fid -> coordinates, "
+            f"got {type(value).__name__}"
+        )
+
+
+def _check_point(pt, fid) -> None:
+    """Raise unless *pt* is an ``(x, y)`` pair of finite real numbers."""
+    if isinstance(pt, (str, bytes)) or not hasattr(pt, "__len__") or len(pt) != 2:
+        raise TypeError(f"road {fid!r}: point must be an (x, y) pair, got {pt!r}")
+    for c in pt:
+        if isinstance(c, bool) or not isinstance(c, Real):
+            raise TypeError(
+                f"road {fid!r}: coordinates must be real numbers, got {pt!r}"
+            )
+        if not math.isfinite(c):
+            raise ValueError(
+                f"road {fid!r}: coordinates must be finite, got {pt!r}"
+            )
+
+
+def _check_tolerance(tolerance) -> float:
+    """Return *tolerance* as a float; reject non-numbers, NaN, inf and < 0."""
+    if isinstance(tolerance, bool) or not isinstance(tolerance, Real):
+        raise TypeError(
+            f"tolerance must be a real number, got {type(tolerance).__name__}"
+        )
+    tolerance = float(tolerance)
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError(
+            f"tolerance must be a finite number >= 0, got {tolerance!r}"
+        )
+    return tolerance
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +94,19 @@ def find_dangles(
     Returns
     -------
     list of (road_fid, x, y, endpoint_index)
+
+    Raises
+    ------
+    TypeError
+        If *endpoints_by_road* is not a mapping, a point is not an
+        ``(x, y)`` pair of real numbers, or *tolerance* is not a real
+        number (``None``, strings and booleans are rejected).
+    ValueError
+        If *tolerance* is negative, NaN or infinite, or a coordinate is
+        NaN or infinite.
     """
+    _check_mapping(endpoints_by_road, "endpoints_by_road")
+    tolerance = _check_tolerance(tolerance)
     cell = max(tolerance, 1e-9)
     # Endpoints of the *same* road only connect when they coincide exactly
     # (a closed loop); near-misses within tolerance remain dangles.
@@ -60,7 +117,9 @@ def find_dangles(
     all_eps: List[Tuple[int, float, float, int]] = []
 
     for fid, pts in endpoints_by_road.items():
-        for i, (x, y) in enumerate(pts):
+        for i, pt in enumerate(pts):
+            _check_point(pt, fid)
+            x, y = pt
             all_eps.append((fid, x, y, i))
             grid[_grid_key(x, y, cell)].append((fid, x, y, i))
 
@@ -111,6 +170,11 @@ def find_disconnected(
     (disconnected_fids, dangles)
         *dangles* is the full dangle list (reused by callers to avoid
         running the hash twice).
+
+    Raises
+    ------
+    TypeError, ValueError
+        For invalid input, as in :func:`find_dangles`.
     """
     dangles = find_dangles(endpoints_by_road, tolerance)
 
@@ -210,10 +274,23 @@ def find_self_intersections(
     -------
     list of (road_fid, ix, iy) — one entry per road (first crossing
     point only).
+
+    Raises
+    ------
+    TypeError
+        If *vertices_by_road* is not a mapping or a vertex is not an
+        ``(x, y)`` pair of real numbers.
+    ValueError
+        If a coordinate is NaN or infinite.
     """
+    _check_mapping(vertices_by_road, "vertices_by_road")
     results: List[Tuple[int, float, float]] = []
 
     for fid, parts in vertices_by_road.items():
+        parts = [list(part) for part in parts]
+        for part in parts:
+            for pt in part:
+                _check_point(pt, fid)
         found = False
         for part in parts:
             if found:
